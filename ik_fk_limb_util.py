@@ -1,45 +1,45 @@
-import maya.cmds as cmds
+import maya.cmds as cmds # type: ignore
 
 class IKFKUtil():
-    def __init__(self):
-        pass
+
+    def shortName(self, name: str):
+        return name.split("|")[-1]
+
+    def clean_duplicate_suffix(self, name: str):
+        """
+        Maya duplicate by adding a number, like l_humerus1
+        This function remove the number at the end
+        """
+        while name and name[-1].isdigit():
+            name = name[:-1]
+
+        return name
 
     def apply(self, joints: list[str]):
         pass
 
 
-    def addIkFk(self, joints: list[str]):
+    def switchIkFK(self, switch: str, joints: list[str], fk_joints: list[str], ik_joints: list[str]):
 
-        # Build Fk joints
-        for joint in joints:
-            cmds.joint(name=joint+"_fk")
-            cmds.matchTransform(joint+"_fk", joint)
-
-        # Clear selection
-        cmds.select(clear=True)
-
-        # Build Ik joints
-        for joint in joints:
-            cmds.joint(name=joint+"_fk")
-            cmds.matchTransform(joint+"_fk", joint)
-
-        # Add constraints
-        for joint in joints:
-            cmds.parentConstraint(joint+"_fk", joint+"_ik", joint, w=True, mo=True)
-
-    def switchIkFK(self, switch: str, fk_joints: list[str], ik_joints: list[str]):
-
-        # Add switch attribute
+        # Add switch attribute, 0 to disable IK, 1 to enable IK
         cmds.addAttr(switch, longName="ikFkSwitch", defaultValue=0, minValue=0, maxValue=1, keyable=True)
 
-        # Add
+        reverse = cmds.createNode("reverse", name=switch+"_reverse")
+
+        cmds.connectAttr(f"{switch}.ikFKSwitch", f"{reverse}.inputX", force=True)
+
+        for fk_joint, ik_joint, joint in zip(fk_joints, ik_joints, joints):
+            constraint = cmds.parentConstraint(fk_joint, ik_joint, joint, mo=False)[0]
+            weight_aliases = cmds.parentConstraint(constraint, query=True, weightAliasList=True)
+
+            for alias in weight_aliases:
+                if "fk" in alias:
+                    cmds.connectAttr(f"{reverse}.outputX", f"{constraint}.{alias}", force=True)
+                else:
+                    cmds.connectAttr(f"{switch}.ikFKSwitch", f"{constraint}.{alias}", force=True)
 
 
-
-        pass
-
-
-    def addSwitchCtrl(self, body_part: str, side: str, pos: tuple[float, float, float]) -> str:
+    def SwitchCtrl(self, body_part: str, side: str, pos: tuple[float, float, float]) -> str:
         name = body_part + "_" + side + "_ik_fk_switch"
         switch_ctrl = createController.twoArrow(name=name)
 
@@ -80,10 +80,10 @@ class IKFKUtil():
                 cmds.disconnectAttr('{}.worldMatrix[0]'.format(fk_joints[i]), '{}.offsetParentMatrix'.format(fk_ctrls[i]))
 
 
+    def buildIkLimb(self, body_part: str, ik_joints: list[str]):
 
-    def buildIkLimb(self, body_part: str, side: str, ik_joints: list[str]):
-
-        ikHandle = body_part + "_" + side + "_ikHandle"
+        ikHandle = body_part + "_ikHandle"
+        pv = body_part + "_pv_ctrl"
 
         # Add IK handle
         cmds.ikHandle(name= ikHandle, sol="ikRPSolver", sj=ik_joints[0], ee=ik_joints[-1])
@@ -91,13 +91,73 @@ class IKFKUtil():
         # Add IK ctrl
         ik_ctrl = createController.fourArrow(name=body_part+"_"+side+"_ik_ctrl")
         cmds.matchTransform(ik_ctrl, ik_joints[-1], position=True)
+        self.bake_trs_offsetParentMatrix(ik_ctrl)
 
         cmds.parent(ikHandle, ik_ctrl)
 
-    def addIk(self, ik_joints: list[str], name: str) -> str:
+        # Add PV ctrl
+        self.addPV(ik_joints, pv)
 
+    def addPV(self, ik_joints: list[str], name: str) -> str:
 
         return name
+
+    # origin: https://github.com/vertexTheory/ik_fk_limb/blob/master/video3_ik_fk_limb.py#L123
+    def bake_trs_offsetParentMatrix(self, transform: str):
+        '''
+        Bake TRS value into offsetParentMatrix
+
+        '''
+
+        # duplicate transform to place with offsetParentMatrix
+        temp = cmds.duplicate(transform, po=True)[0]
+
+        parent = None
+
+        try:
+            parent = cmds.listRelatives(transform, p=True)[0]
+        except:
+            pass
+
+        # self_offsetParentMatrix = self_worldMatrix * inverse( parent_worldMatrix )
+        if parent:
+            mult = cmds.createNode('multMatrix')
+            cmds.connectAttr('{}.worldMatrix[0]'.format(temp), '{}.matrixIn[0]'.format(mult))
+            cmds.connectAttr('{}.worldInverseMatrix[0]'.format(parent), '{}.matrixIn[1]'.format(mult))
+            cmds.connectAttr('{}.matrixSum'.format(mult), '{}.offsetParentMatrix'.format(transform))
+        else:
+            cmds.connectAttr('{}.worldMatrix'.format(temp), '{}.offsetParentMatrix'.format(transform))
+            cmds.disconnectAttr('{}.worldMatrix'.format(temp), '{}.offsetParentMatrix'.format(transform))
+
+        # delete temp transform
+        cmds.delete(temp)
+
+
+    # origin: https://github.com/vinL1234/auto-limb-tool/blob/main/auto_limb_tool/core.py#L92
+    def duplicate_joints(self, root_joint, suffix):
+        '''
+        Duplicate the full hierachy and rename it from children to root.
+        '''
+        dup_root = cmds.duplicate(root_joint, renameChildren=True)[0]
+
+        dup_root = (
+                    cmds.ls(dup_root, long=True, type="joint") 
+                    or [dup_root]
+                    )[0]
+
+        dup_joints = cmds.listRelatives(dup_root, type="joint", allDescendents=True, fullPath=True) or []
+
+        dup_joints.append(dup_root)
+
+        # Important:
+        # Rename deepest children first
+        # If rename the root first, all child full path change and 
+
+        dup_joints
+
+
+
+
 
 
 
