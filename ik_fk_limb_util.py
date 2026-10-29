@@ -1,54 +1,73 @@
-import maya.cmds as cmds
+import maya.cmds as cmds # type: ignore
 
 class IKFKUtil():
-    def __init__(self):
-        pass
 
-    def apply(self, joints: list[str]):
-        pass
+    def shortName(self, name: str):
+        return name.split("|")[-1]
+
+    def clean_duplicate_suffix(self, name: str):
+        """
+        Maya duplicate by adding a number, like l_humerus1
+        This function remove the number at the end
+        """
+        while name and name[-1].isdigit():
+            name = name[:-1]
+
+        return name
+
+    def build(self, limb, joints: list[str]):
+
+        # Create fk and ik joints chain
+        fk_joints = self.duplicate_joints(joints, "_fk")
+        ik_joints = self.duplicate_joints(joints, "_ik")
+
+        fk_ctrls = self.buildFKLimb(limb, fk_joints)
+        ik_ctrls = self.buildIKLimb(limb, ik_joints)
+
+        jnt_pos = cmds.xform(joints[-1], query=True, p=True, ws=True)
+        switch_pos = (jnt_pos[0], jnt_pos[1], jnt_pos[2])
+
+        swich_ctrl = self.createSwitchCtrl(limb, switch_pos)
+
+        self.switchIkFK(swich_ctrl, joints, fk_joints, ik_joints, fk_ctrls, ik_ctrls)
 
 
-    def addIkFk(self, joints: list[str]):
+    def switchIkFK(self, switch: str, joints: list[str], fk_joints: list[str], ik_joints: list[str], fk_ctrls: list[str], ik_ctrls: list[str]):
 
-        # Build Fk joints
-        for joint in joints:
-            cmds.joint(name=joint+"_fk")
-            cmds.matchTransform(joint+"_fk", joint)
-
-        # Clear selection
-        cmds.select(clear=True)
-
-        # Build Ik joints
-        for joint in joints:
-            cmds.joint(name=joint+"_fk")
-            cmds.matchTransform(joint+"_fk", joint)
-
-        # Add constraints
-        for joint in joints:
-            cmds.parentConstraint(joint+"_fk", joint+"_ik", joint, w=True, mo=True)
-
-    def switchIkFK(self, switch: str, fk_joints: list[str], ik_joints: list[str]):
-
-        # Add switch attribute
+        # Add switch attribute, 0 to disable IK, 1 to enable IK
         cmds.addAttr(switch, longName="ikFkSwitch", defaultValue=0, minValue=0, maxValue=1, keyable=True)
 
-        # Add
+        reverse = cmds.createNode("reverse", name=switch+"_reverse")
+
+        cmds.connectAttr(f"{switch}.ikFKSwitch", f"{reverse}.inputX", force=True)
+
+        for fk_joint, ik_joint, joint in zip(fk_joints, ik_joints, joints):
+            constraint = cmds.parentConstraint(fk_joint, ik_joint, joint, mo=False)[0]
+            weight_aliases = cmds.parentConstraint(constraint, query=True, weightAliasList=True)
+
+            for alias in weight_aliases:
+                if "fk" in alias:
+                    cmds.connectAttr(f"{reverse}.outputX", f"{constraint}.{alias}", force=True)
+                else:
+                    cmds.connectAttr(f"{switch}.ikFKSwitch", f"{constraint}.{alias}", force=True)
+        
+        # Switch the visibility of fk and ik ctrl
+        for fk_ctrl in fk_ctrls:
+            cmds.connectAttr(f"{reverse}.outputX", f"{fk_ctrl}.visibility", force=True)
+        for ik_ctrl in ik_ctrls:
+            cmds.connectAttr(f"{switch}.outputX", f"{ik_ctrl}.visibility", force=True)
 
 
-
-        pass
-
-
-    def addSwitchCtrl(self, body_part: str, side: str, pos: tuple[float, float, float]) -> str:
-        name = body_part + "_" + side + "_ik_fk_switch"
+    def createSwitchCtrl(self, limb: str, pos: tuple[float, float, float]) -> str:
+        name = limb + "_ik_fk_switch"
         switch_ctrl = createController.twoArrow(name=name)
 
         cmds.move(switch_ctrl, *pos, worldSpace=True)
-        cmds.makeIdentity(switch_ctrl, t=True)
+        self.bake_trs_offsetParentMatrix(switch_ctrl)
 
         return switch_ctrl
 
-    def buildFKLimb(self, fk_joints: list[str]):
+    def buildFKLimb(self, limb: str, fk_joints: list[str]) -> list[str]:
         fk_ctrls = []
         for i in range(len(fk_joints)):
             # Add FK ctrl
@@ -58,8 +77,6 @@ class IKFKUtil():
             # Parent fk ctrls together
             if i > 0:
                 cmds.parent(fk_ctrls[i], fk_ctrls[i-1])
-
-
 
         # Place using offset parent matrix (Keep localMatrix = identityMatrix)
         # Formula: self_worldMatrix = self_localMatrix * self_offsetParentMatrix * parent_worldMaxtrix
@@ -79,26 +96,143 @@ class IKFKUtil():
                 cmds.connectAttr('{}.worldMatrix[0]'.format(fk_joints[i]), '{}.offsetParentMatrix'.format(fk_ctrls[i]))
                 cmds.disconnectAttr('{}.worldMatrix[0]'.format(fk_joints[i]), '{}.offsetParentMatrix'.format(fk_ctrls[i]))
 
+        return fk_ctrls
 
+    def buildIKLimb(self, limb: str, ik_joints: list[str]) -> list[str]:
 
-    def buildIkLimb(self, body_part: str, side: str, ik_joints: list[str]):
+        ikHandle = limb + "_ikHandle"
+        pv = limb + "_pv_ctrl"
 
-        ikHandle = body_part + "_" + side + "_ikHandle"
 
         # Add IK handle
         cmds.ikHandle(name= ikHandle, sol="ikRPSolver", sj=ik_joints[0], ee=ik_joints[-1])
 
         # Add IK ctrl
-        ik_ctrl = createController.fourArrow(name=body_part+"_"+side+"_ik_ctrl")
-        cmds.matchTransform(ik_ctrl, ik_joints[-1], position=True)
+        ik_ctrl = createController.fourArrow(name=limb+"_ik_ctrl")
+        cmds.matchTransform(ik_ctrl, ik_joints[-1], position=True, rotation=True)
+        self.bake_trs_offsetParentMatrix(ik_ctrl)
 
         cmds.parent(ikHandle, ik_ctrl)
 
-    def addIk(self, ik_joints: list[str], name: str) -> str:
+        # Add PV ctrl
+        self.addPV(limb, ikHandle, ik_joints)
+
+        return [ikHandle, pv]
+
+    def addPV(self, name: str, ikHandle: str, ik_joints: list[str]) -> str:
+        # Get joints' position
+        start_jnt = cmds.xform( ik_joints[0], query=True, ws=True, rp=True )
+        mid_jnt = cmds.xform( ik_joints[1], query=True, ws=True, rp=True )
+        end_jnt = cmds.xform( ik_joints[2], query=True, ws=True, rp=True )
+
+        pv_ctrl = createController.pyramid(name)
+
+        # Calculate the position of PV
+        # bend vector = middle_jnt - mid(end_jnt, start_jnt) 
+        # pv_pos = middle_jnt + scale * bend vector
+        mid_point = [a-b for a,b in zip(end_jnt, start_jnt)]
+        bend_vector = [a-b for a,b in zip(mid_jnt, mid_point)]
+        pv_pos = [ (a+b)*5 for a,b in zip(mid_point, bend_vector) ]
+
+        cmds.xform(pv_ctrl, t=tuple(pv_pos), ws=True)
+
+        # Add pv constraint
+        self.connectPV_constraint(ikHandle, pv_ctrl)
+
+        return pv_ctrl
+
+    # connect pv ctrl to ikHandle by pole vector constraint
+    def connectPV_constraint(self, ikHandle: str, pv_ctrl: str):
+        cmds.poleVectorConstraint(pv_ctrl, ikHandle)
+
+    # Connect pv ctrl to ikHandle manually, no pv constraint
+    def connectPV_manual(self, ikHandle: str, pv_ctrl: str):
+        pass
+
+    # origin: https://github.com/vertexTheory/ik_fk_limb/blob/master/video3_ik_fk_limb.py#L123
+    def bake_trs_offsetParentMatrix(self, transform: str):
+        '''
+        Bake TRS value into offsetParentMatrix
+
+        '''
+
+        # duplicate transform to place with offsetParentMatrix
+        temp = cmds.duplicate(transform, po=True)[0]
+
+        parent = None
+
+        try:
+            parent = cmds.listRelatives(transform, p=True)[0]
+        except:
+            pass
+
+        # self_offsetParentMatrix = self_worldMatrix * inverse( parent_worldMatrix )
+        if parent:
+            mult = cmds.createNode('multMatrix')
+            cmds.connectAttr('{}.worldMatrix[0]'.format(temp), '{}.matrixIn[0]'.format(mult))
+            cmds.connectAttr('{}.worldInverseMatrix[0]'.format(parent), '{}.matrixIn[1]'.format(mult))
+            cmds.connectAttr('{}.matrixSum'.format(mult), '{}.offsetParentMatrix'.format(transform))
+        else:
+            cmds.connectAttr('{}.worldMatrix'.format(temp), '{}.offsetParentMatrix'.format(transform))
+            cmds.disconnectAttr('{}.worldMatrix'.format(temp), '{}.offsetParentMatrix'.format(transform))
+
+        # delete temp transform
+        cmds.delete(temp)
 
 
-        return name
+    # origin: https://github.com/vinL1234/auto-limb-tool/blob/main/auto_limb_tool/core.py#L92
+    def duplicate_joints(self, root_joint, suffix):
+        '''
+        Duplicate the full hierachy and rename it from children to root.
+        '''
+        dup_root = cmds.duplicate(root_joint, renameChildren=True)[0]
 
+        dup_root = (
+                    cmds.ls(dup_root, long=True, type="joint") 
+                    or [dup_root]
+                    )[0]
+
+        dup_joints = cmds.listRelatives(dup_root, type="joint", allDescendents=True, fullPath=True) or []
+
+        dup_joints.append(dup_root)
+
+        # Important:
+        # Rename deepest children first
+        # If rename the root first, all child full path change and 
+
+        dup_joints.sort(key=lambda x: x.count("|"), reverse=True)
+
+        renamed_root = None
+
+        for jnt in dup_joints:
+            short = self.shortName(jnt)
+            short = self.clean_duplicate_suffix(jnt)
+
+            new_name = short + suffix
+
+            renamed_jnt = cmds.rename(jnt, new_name)
+
+            if jnt == dup_root:
+                renamed_root = renamed_jnt
+
+        if not renamed_root:
+            cmds.warning("Could not find duplicated root.")
+            return []
+
+        renamed_root = (cmds.ls(
+            renamed_root,
+            long=True,
+            type="joint"
+        ) or [renamed_root])[0]
+
+        # Return the renamed hierachy from root to children
+        renamed = cmds.listRelatives(renamed_root, allDescendents=True, type="joint", fullPath=True) or []
+
+        renamed.reverse()
+
+        renamed = [renamed_root] + renamed_root
+
+        return renamed
 
 
 class createController():
@@ -117,6 +251,12 @@ class createController():
     def twoArrow(name: str) -> str:
         cmds.curve(name=name, d=1, p=ctrlShapes.two_arrow)
         return name
+
+    @staticmethod
+    def pyramid(name: str) -> str:
+        cmds.curve(name=name, d=1, p=ctrlShapes.pyramid)
+        return name
+
 
 class ctrlShapes():
 
@@ -162,4 +302,16 @@ class ctrlShapes():
         ( -10.0, 0.0, -15.0 )
     ]
 
+    pyramid = [
+        ( -5.0, 0.0, 5.0 ),
+        ( 5.0, 0.0, 5.0 ),
+        ( 5.0, 0.0, -5.0 ),
+        ( -5.0, 0.0, -5.0 ),
+        ( -5.0, 0.0, 5.0 ),
+        ( 0.0, 8.211100621552976, 0.0 ),
+        ( -5.0, 0.0, -5.0 ),
+        ( 5.0, 0.0, -5.0 ),
+        ( 0.0, 8.211100621552976, 0.0 ),
+        ( 5.0, 0.0, 5.0 )
+    ]
 
