@@ -146,8 +146,26 @@ class IKFKUtil():
         cmds.poleVectorConstraint(pv_ctrl, ikHandle)
 
     # Connect pv ctrl to ikHandle manually, no pv constraint
-    def connectPV_manual(self, ikHandle: str, pv_ctrl: str):
-        pass
+    def connectPV_manual(self, ikHandle: str, pv_ctrl: str, start_jnt: str):
+
+        # connect decompose matrix node
+        start_decompose = cmds.createNode('decomposeMatrix', n='decompose_{}'.format(start_jnt))
+        pv_decompose = cmds.createNode('decomposeMatrix', n='decompose_{}'.format(pv_ctrl))
+
+        # connect them
+        cmds.connectAttr('{}.worldMatrix[0]'.format(start_jnt), '{}.inputMatrix'.format(start_decompose))
+        cmds.connectAttr('{}.worldMatrix[0]'.format(pv_ctrl), '{}.inputMatrix'.format(pv_decompose))
+
+        # subtract start jnt pos from pv pos
+        minus_node = cmds.createNode('plusMinusAverage')
+        cmds.setAttr('{}.operation'.format(minus_node), 2)
+        cmds.connectAttr('{}.outputTranslate'.format(pv_decompose), '{}.input3D[0]'.format(minus_node))
+        cmds.connectAttr('{}.outputTranslate'.format(start_decompose), '{}.input3D[1]'.format(minus_node))
+
+        # connect pv to ik_ctrl
+        cmds.connectAttr('{}.output3D'.format(minus_node), '{}.poleVector'.format(ikHandle))
+
+
 
     # origin: https://github.com/vertexTheory/ik_fk_limb/blob/master/video3_ik_fk_limb.py#L123
     def bake_trs_offsetParentMatrix(self, transform: str):
