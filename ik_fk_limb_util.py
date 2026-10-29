@@ -235,38 +235,6 @@ class IKFKUtil():
         return renamed
 
 
-    # Helper functions to calculate the position of PV
-    def add_vector(self, vectorA, vectorB):
-        """
-        Add two vectors together
-        Args:
-            vectorA: list[float, float, float]
-            vectorB: list[float, float, float]
-        Return:
-            vectorA + vectorB
-        """
-
-        return[a+b for a,b in zip(vectorA, vectorB)]
-
-    def subtract_vector(self, vectorA, vectorB):
-        """
-        Add two vectors together
-        Args:
-            vectorA: list[float, float, float]
-            vectorB: list[float, float, float]
-        Return:
-            vectorA - vectorB
-        """
-        return[a-b for a,b in zip(vectorA, vectorB)]
-
-    def scale_vector(self, vectorA, vectorB):
-        return []
-
-
-
-
-
-
 class createController():
 
     @staticmethod
