@@ -2,7 +2,7 @@ import maya.cmds as cmds
 
 
 class StretchSquashUtil():
-    def build(self, limb, primary_axis, switch_ctrl, ik_joints, ik_ctrl):
+    def build(self, limb, primary_axis, switch_ctrl, switch_ik_fk_attr, ik_joints, ik_ctrl):
         '''
         Add stretch and squash ability to limb
         Args:
@@ -46,16 +46,34 @@ class StretchSquashUtil():
         cmds.connectAttr(f"{divide_node}.outputX", f"{condition_node}.colorIfTrueR")
         cmds.setAttr(f"{condition_node}.colorIfFalseR", 1)
 
-        cmds.addAttr(switch_ctrl, longName="STRETCH")
+        cmds.addAttr(switch_ctrl, longName="stretchMode", attributeType='enum', enumName="None:Stretch_Squash:Stretch:Squash")
+
+        # Map stretch mode to condition operation number
+        # None: 0, Stretch_Squash: 1,   Stretch: 2,   Squash: 4 
+        mode_choice = cmds.createNode("choice", name=f"{limb}_stretch_squash_mode_choice")
+        cmds.setAttr(f"{mode_choice}.input[0]", 0)
+        cmds.setAttr(f"{mode_choice}.input[0]", 1)
+        cmds.setAttr(f"{mode_choice}.input[0]", 2)
+        cmds.setAttr(f"{mode_choice}.input[0]", 4)
+
+        # Siwtch ctrl attr -> choice node selector
+        cmds.connectAttr(f"{switch_ctrl}.stretchMode", f"{mode_choice}.selector")
+        # Choice node selector  ->  conditon node operation
+        cmds.connectAttr(f"{mode_choice}.output", f"{condition_node}.operation")
+
+        # Only stretch in IK mode by blend node
+        blend = cmds.createNode("blendColors", name=limb+"_stretch_blend")
+        cmds.connectAttr(f"{switch_ctrl}.{switch_ik_fk_attr}", f"{blend}.blender")
+        cmds.connectAttr(f"{condition_node}.outColorR", f"{blend}.color1R")
+        cmds.setAttr(f"{blend}.color2R", 1.0)
 
 
+        # Scale only first and second ik joints
+        # Joint 3 is the end joint and does not need scale 
+        scale_attr = "scale" + primary_axis
+        cmds.connectAttr(f"{blend}.outputR", f"{ik_joints[0]}.{scale_attr}")
+        cmds.connectAttr(f"{blend}.outputR", f"{ik_joints[1]}.{scale_attr}")
 
-
-    def getStretchSquashLength(self, limb: str, root_locator: str, ik_ctrl: str) -> float:
-
-        return cmds.getAttr( distance_node + ".distance" )
-
-    def addAttr()
 
     """
     ratio = (stretch length / original legnth) 
