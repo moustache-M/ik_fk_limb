@@ -24,12 +24,14 @@ class IKFKUtil():
         fk_ctrls = self.buildFKLimb(limb, fk_joints)
         ik_ctrls = self.buildIKLimb(limb, ik_joints)
 
-        jnt_pos = cmds.xform(joints[-1], query=True, p=True, ws=True)
-        switch_pos = (jnt_pos[0], jnt_pos[1], jnt_pos[2])
+        jnt_pos = cmds.xform(joints[-1], query=True, t=True, ws=True)
+        switch_pos = (jnt_pos[0], jnt_pos[1], jnt_pos[2]-5)
 
         swich_ctrl = self.createSwitchCtrl(limb, switch_pos)
 
         self.switchIkFK(swich_ctrl, joints, fk_joints, ik_joints, fk_ctrls, ik_ctrls)
+
+        print("Build done.\n")
 
 
     def switchIkFK(self, switch: str, joints: list[str], fk_joints: list[str], ik_joints: list[str], fk_ctrls: list[str], ik_ctrls: list[str]):
@@ -39,7 +41,7 @@ class IKFKUtil():
 
         reverse = cmds.createNode("reverse", name=switch+"_reverse")
 
-        cmds.connectAttr(f"{switch}.ikFKSwitch", f"{reverse}.inputX", force=True)
+        cmds.connectAttr(f"{switch}.ikFkSwitch", f"{reverse}.inputX", force=True)
 
         for fk_joint, ik_joint, joint in zip(fk_joints, ik_joints, joints):
             constraint = cmds.parentConstraint(fk_joint, ik_joint, joint, mo=False)[0]
@@ -49,20 +51,20 @@ class IKFKUtil():
                 if "fk" in alias:
                     cmds.connectAttr(f"{reverse}.outputX", f"{constraint}.{alias}", force=True)
                 else:
-                    cmds.connectAttr(f"{switch}.ikFKSwitch", f"{constraint}.{alias}", force=True)
+                    cmds.connectAttr(f"{switch}.ikFkSwitch", f"{constraint}.{alias}", force=True)
         
         # Switch the visibility of fk and ik ctrl
         for fk_ctrl in fk_ctrls:
             cmds.connectAttr(f"{reverse}.outputX", f"{fk_ctrl}.visibility", force=True)
         for ik_ctrl in ik_ctrls:
-            cmds.connectAttr(f"{switch}.outputX", f"{ik_ctrl}.visibility", force=True)
+            cmds.connectAttr(f"{switch}.ikFkSwitch", f"{ik_ctrl}.visibility", force=True)
 
 
     def createSwitchCtrl(self, limb: str, pos: tuple[float, float, float]) -> str:
         name = limb + "_ik_fk_switch"
         switch_ctrl = createController.twoArrow(name=name)
 
-        cmds.move(switch_ctrl, *pos, worldSpace=True)
+        cmds.move(pos[0], pos[1], pos[2], switch_ctrl, worldSpace=True)
         self.bake_trs_offsetParentMatrix(switch_ctrl)
 
         return switch_ctrl
@@ -71,7 +73,7 @@ class IKFKUtil():
         fk_ctrls = []
         for i in range(len(fk_joints)):
             # Add FK ctrl
-            fk_ctrl = createController.circle(name=fk_joints[i]+"_ctrl", r=1.0, n=(0,1,0))
+            fk_ctrl = createController.circle(name=fk_joints[i]+"_ctrl", r=3.0, n=(0,1,0))
             fk_ctrls.append(fk_ctrl)
 
             # Parent fk ctrls together
@@ -96,6 +98,10 @@ class IKFKUtil():
                 cmds.connectAttr('{}.worldMatrix[0]'.format(fk_joints[i]), '{}.offsetParentMatrix'.format(fk_ctrls[i]))
                 cmds.disconnectAttr('{}.worldMatrix[0]'.format(fk_joints[i]), '{}.offsetParentMatrix'.format(fk_ctrls[i]))
 
+        for fk_ctrl, fk_joint in zip(fk_ctrls, fk_joints):
+            cmds.parentConstraint(fk_ctrl, fk_joint, mo=False)
+
+
         return fk_ctrls
 
     def buildIKLimb(self, limb: str, ik_joints: list[str]) -> list[str]:
@@ -105,7 +111,7 @@ class IKFKUtil():
 
 
         # Add IK handle
-        cmds.ikHandle(name= ikHandle, sol="ikRPSolver", sj=ik_joints[0], ee=ik_joints[-1])
+        cmds.ikHandle(name=ikHandle, sol="ikRPsolver", sj=ik_joints[0], ee=ik_joints[-1])
 
         # Add IK ctrl
         ik_ctrl = createController.fourArrow(name=limb+"_ik_ctrl")
@@ -115,9 +121,9 @@ class IKFKUtil():
         cmds.parent(ikHandle, ik_ctrl)
 
         # Add PV ctrl
-        self.addPV(limb, ikHandle, ik_joints)
+        self.addPV(limb+"_pv_ctrl", ikHandle, ik_joints)
 
-        return [ikHandle, pv]
+        return [ik_ctrl, pv]
 
     def addPV(self, name: str, ikHandle: str, ik_joints: list[str]) -> str:
         # Get joints' position
@@ -130,14 +136,17 @@ class IKFKUtil():
         # Calculate the position of PV
         # bend vector = middle_jnt - mid(end_jnt, start_jnt) 
         # pv_pos = middle_jnt + scale * bend vector
-        mid_point = [a-b for a,b in zip(end_jnt, start_jnt)]
+        mid_point = [(a+b)/2 for a,b in zip(end_jnt, start_jnt)]
         bend_vector = [a-b for a,b in zip(mid_jnt, mid_point)]
-        pv_pos = [ (a+b)*5 for a,b in zip(mid_point, bend_vector) ]
+        pv_pos = [ a+b*4 for a,b in zip(mid_point, bend_vector) ]
+        print("mid point: ", mid_point , "  | bend vector: " , bend_vector , "  | pv_pos:  " , pv_pos)
 
         cmds.xform(pv_ctrl, t=tuple(pv_pos), ws=True)
 
         # Add pv constraint
         self.connectPV_constraint(ikHandle, pv_ctrl)
+
+        self.bake_trs_offsetParentMatrix(pv_ctrl)
 
         return pv_ctrl
 
@@ -174,6 +183,7 @@ class IKFKUtil():
 
         '''
 
+
         # duplicate transform to place with offsetParentMatrix
         temp = cmds.duplicate(transform, po=True)[0]
 
@@ -191,11 +201,21 @@ class IKFKUtil():
             cmds.connectAttr('{}.worldInverseMatrix[0]'.format(parent), '{}.matrixIn[1]'.format(mult))
             cmds.connectAttr('{}.matrixSum'.format(mult), '{}.offsetParentMatrix'.format(transform))
         else:
-            cmds.connectAttr('{}.worldMatrix'.format(temp), '{}.offsetParentMatrix'.format(transform))
-            cmds.disconnectAttr('{}.worldMatrix'.format(temp), '{}.offsetParentMatrix'.format(transform))
+            cmds.connectAttr('{}.worldMatrix[0]'.format(temp), '{}.offsetParentMatrix'.format(transform))
+            cmds.disconnectAttr('{}.worldMatrix[0]'.format(temp), '{}.offsetParentMatrix'.format(transform))
 
         # delete temp transform
         cmds.delete(temp)
+
+        for attr in ["translate", "rotate", "scale"]:
+            if attr != "scale":
+                cmds.setAttr("{}.{}X".format(transform, attr), 0)
+                cmds.setAttr("{}.{}Y".format(transform, attr), 0)
+                cmds.setAttr("{}.{}Z".format(transform, attr), 0)
+            else:
+                cmds.setAttr("{}.{}X".format(transform, attr), 1)
+                cmds.setAttr("{}.{}Y".format(transform, attr), 1)
+                cmds.setAttr("{}.{}Z".format(transform, attr), 1)
 
 
     # origin: https://github.com/vinL1234/auto-limb-tool/blob/main/auto_limb_tool/core.py#L92
@@ -224,7 +244,9 @@ class IKFKUtil():
 
         for jnt in dup_joints:
             short = self.shortName(jnt)
-            short = self.clean_duplicate_suffix(jnt)
+            print("short: ", short, "\n")
+            short = self.clean_duplicate_suffix(short)
+            print("short: ", short, "\n")
 
             new_name = short + suffix
 
@@ -244,11 +266,11 @@ class IKFKUtil():
         ) or [renamed_root])[0]
 
         # Return the renamed hierachy from root to children
-        renamed = cmds.listRelatives(renamed_root, allDescendents=True, type="joint", fullPath=True) or []
+        renamed = cmds.listRelatives(renamed_root, allDescendents=True, type="joint") or []
 
         renamed.reverse()
 
-        renamed = [renamed_root] + renamed_root
+        renamed = [renamed_root] + renamed
 
         return renamed
 
