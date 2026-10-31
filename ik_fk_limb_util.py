@@ -17,21 +17,24 @@ class IKFKUtil():
 
     def build(self, limb, joints: list[str]):
 
-        # Create fk and ik joints chain
-        fk_joints = self.duplicate_joints(joints, "_fk")
-        ik_joints = self.duplicate_joints(joints, "_ik")
 
+        # Create fk and ik joints chain
+        fk_joints = self.duplicate_partial_joints(joints, "_fk")
+        ik_joints = self.duplicate_partial_joints(joints, "_ik")
+
+        print("Fk joints:  ", fk_joints, "\nIk joints: ", ik_joints)
         fk_ctrls = self.buildFKLimb(limb, fk_joints)
         ik_ctrls = self.buildIKLimb(limb, ik_joints)
 
         jnt_pos = cmds.xform(joints[-1], query=True, t=True, ws=True)
         switch_pos = (jnt_pos[0], jnt_pos[1], jnt_pos[2]-5)
 
-        swich_ctrl = self.createSwitchCtrl(limb, switch_pos)
+        swich_ctrl = self.createSwitchCtrl(limb, switch_pos, (0,1,0))
 
         self.switchIkFK(swich_ctrl, joints, fk_joints, ik_joints, fk_ctrls, ik_ctrls)
 
         print("Build done.\n")
+
 
 
     def switchIkFK(self, switch: str, joints: list[str], fk_joints: list[str], ik_joints: list[str], fk_ctrls: list[str], ik_ctrls: list[str]):
@@ -60,9 +63,9 @@ class IKFKUtil():
             cmds.connectAttr(f"{switch}.ikFkSwitch", f"{ik_ctrl}.visibility", force=True)
 
 
-    def createSwitchCtrl(self, limb: str, pos: tuple[float, float, float]) -> str:
+    def createSwitchCtrl(self, limb: str, pos: tuple[float, float, float], normal: tuple[int, int, int]) -> str:
         name = limb + "_ik_fk_switch"
-        switch_ctrl = createController.twoArrow(name=name)
+        switch_ctrl = createController.twoArrow(name=name, normal=normal)
 
         cmds.move(pos[0], pos[1], pos[2], switch_ctrl, worldSpace=True)
         self.bake_trs_offsetParentMatrix(switch_ctrl)
@@ -73,7 +76,7 @@ class IKFKUtil():
         fk_ctrls = []
         for i in range(len(fk_joints)):
             # Add FK ctrl
-            fk_ctrl = createController.circle(name=fk_joints[i]+"_ctrl", r=3.0, n=(0,1,0))
+            fk_ctrl = createController.circle(name=fk_joints[i]+"_ctrl", r=3.0, normal=(1,0,0))
             fk_ctrls.append(fk_ctrl)
 
             # Parent fk ctrls together
@@ -114,7 +117,7 @@ class IKFKUtil():
         cmds.ikHandle(name=ikHandle, sol="ikRPsolver", sj=ik_joints[0], ee=ik_joints[-1])
 
         # Add IK ctrl
-        ik_ctrl = createController.fourArrow(name=limb+"_ik_ctrl")
+        ik_ctrl = createController.fourArrow(name=limb+"_ik_ctrl", normal=(1,0,0))
         cmds.matchTransform(ik_ctrl, ik_joints[-1], position=True, rotation=True)
         self.bake_trs_offsetParentMatrix(ik_ctrl)
 
@@ -131,14 +134,14 @@ class IKFKUtil():
         mid_jnt = cmds.xform( ik_joints[1], query=True, ws=True, rp=True )
         end_jnt = cmds.xform( ik_joints[2], query=True, ws=True, rp=True )
 
-        pv_ctrl = createController.pyramid(name)
+        pv_ctrl = createController.pyramid(name, normal=(0,0,1))
 
         # Calculate the position of PV
         # bend vector = middle_jnt - mid(end_jnt, start_jnt) 
         # pv_pos = middle_jnt + scale * bend vector
         mid_point = [(a+b)/2 for a,b in zip(end_jnt, start_jnt)]
         bend_vector = [a-b for a,b in zip(mid_jnt, mid_point)]
-        pv_pos = [ a+b*4 for a,b in zip(mid_point, bend_vector) ]
+        pv_pos = [ a+b*5 for a,b in zip(mid_point, bend_vector) ]
         print("mid point: ", mid_point , "  | bend vector: " , bend_vector , "  | pv_pos:  " , pv_pos)
 
         cmds.xform(pv_ctrl, t=tuple(pv_pos), ws=True)
@@ -173,7 +176,6 @@ class IKFKUtil():
 
         # connect pv to ik_ctrl
         cmds.connectAttr('{}.output3D'.format(minus_node), '{}.poleVector'.format(ikHandle))
-
 
 
     # origin: https://github.com/vertexTheory/ik_fk_limb/blob/master/video3_ik_fk_limb.py#L123
@@ -219,7 +221,7 @@ class IKFKUtil():
 
 
     # origin: https://github.com/vinL1234/auto-limb-tool/blob/main/auto_limb_tool/core.py#L92
-    def duplicate_joints(self, root_joint, suffix):
+    def duplicate_joints_hierachy(self, root_joint, suffix):
         '''
         Duplicate the full hierachy and rename it from children to root.
         '''
@@ -244,9 +246,7 @@ class IKFKUtil():
 
         for jnt in dup_joints:
             short = self.shortName(jnt)
-            print("short: ", short, "\n")
             short = self.clean_duplicate_suffix(short)
-            print("short: ", short, "\n")
 
             new_name = short + suffix
 
@@ -261,97 +261,150 @@ class IKFKUtil():
 
         renamed_root = (cmds.ls(
             renamed_root,
-            long=True,
-            type="joint"
+            type="joint",
         ) or [renamed_root])[0]
 
         # Return the renamed hierachy from root to children
         renamed = cmds.listRelatives(renamed_root, allDescendents=True, type="joint") or []
 
         renamed.reverse()
-
         renamed = [renamed_root] + renamed
 
         return renamed
+
+    def duplicate_partial_joints(self, joint_chain: list[str], suffix: str):
+        '''
+        Duplicate joint chain
+        '''
+        # Duplicate the whole joint hierachy
+        root_joint = joint_chain[0]
+        renamed_root = self.duplicate_joints_hierachy(root_joint, suffix)
+        renamed_chain = [ joint + suffix for joint in joint_chain ]
+
+        tmp_chain = renamed_chain
+
+        # Delete children which aren't in joint chain
+        while tmp_chain:
+            # Delete all children of end joint
+            if len(tmp_chain) == 1:
+                children = cmds.listRelatives(tmp_chain[0], children=True, type="joint")
+                for child in children:
+                    cmds.delete(child)
+                break
+
+            children = cmds.listRelatives(tmp_chain[0], children=True, type="joint")
+            for child in children:
+                if child not in renamed_chain:
+                    cmds.delete(child)
+            tmp_chain = tmp_chain[1:]
+
+        
+        return renamed_chain
 
 
 class createController():
 
     @staticmethod
-    def circle(name: str, r: float, n: tuple[float, float, float]) -> str:
-        cmds.circle(name=name, radius=r, normal=n)
+    def circle(name: str, r: float, normal: tuple[float, float, float]) -> str:
+        cmds.circle(name=name, radius=r, normal=normal)
         return name
 
     @staticmethod
-    def fourArrow(name: str) -> str:
+    def fourArrow(name: str, normal: tuple[int, int, int]) -> str:
         cmds.curve(name=name, d=1, p=ctrlShapes.four_arrow)
+        createController.changeCurveNormal(name, normal=normal)
         return name
 
     @staticmethod
-    def twoArrow(name: str) -> str:
+    def twoArrow(name: str, normal: tuple[int, int, int]) -> str:
         cmds.curve(name=name, d=1, p=ctrlShapes.two_arrow)
+        createController.changeCurveNormal(name, normal)
         return name
 
     @staticmethod
-    def pyramid(name: str) -> str:
+    def pyramid(name: str, normal: tuple[int, int, int]) -> str:
         cmds.curve(name=name, d=1, p=ctrlShapes.pyramid)
+        createController.changeCurveNormal(name, normal)
         return name
 
+    @staticmethod
+    def changeCurveNormal(curve: str, normal: tuple[int, int, int]):
+        if normal == (0,1,0):       # the normal of curve is Y by default
+            return
+        elif normal == (1,0,0):
+            cmds.rotate(0,0,90, f"{curve}.cv[*]", relative=True, objectSpace=True)
+        elif normal == (0,0,1):
+            cmds.rotate(90,0,0, f"{curve}.cv[*]", relative=True, objectSpace=True)
+        else:
+            pass
 
 class ctrlShapes():
 
     four_arrow = [
-        ( 0.0, 0.0, -25.0 ),
-        ( -10.0, 0.0, -15.0 ),
-        ( -5.0, 0.0, -15.0 ),
-        ( -5.0, 0.0, -5.0 ),
-        ( -15.0, 0.0, -5.0 ),
-        ( -15.0, 0.0, -10.0 ),
-        ( -25.0, 0.0, 0.0 ),
-        ( -15.0, 0.0, 10.0 ),
-        ( -15.0, 0.0, 5.0 ),
-        ( -5.0, 0.0, 5.0 ),
-        ( -5.0, 0.0, 15.0 ),
-        ( -10.0, 0.0, 15.0 ),
-        ( 0.0, 0.0, 25.0 ),
-        ( 10.0, 0.0, 15.0 ),
-        ( 5.0, 0.0, 15.0 ),
-        ( 5.0, 0.0, 5.0 ),
-        ( 15.0, 0.0, 5.0 ),
-        ( 15.0, 0.0, 10.0 ),
-        ( 25.0, 0.0, 0.0 ),
-        ( 15.0, 0.0, -10.0 ),
-        ( 15.0, 0.0, -5.0 ),
-        ( 5.0, 0.0, -5.0 ),
-        ( 5.0, 0.0, -15.0 ),
-        ( 10.0, 0.0, -15.0 ),
-        ( 0.0, 0.0, -25.0 )
+        ( 0.0, 0.0, -5.0 ),
+        ( -2.0, 0.0, -3.0 ),
+        ( -1.0, 0.0, -3.0 ),
+        ( -1.0, 0.0, -1.0 ),
+        ( -3.0, 0.0, -1.0 ),
+        ( -3.0, 0.0, -2.0 ),
+        ( -5.0, 0.0, 0.0 ),
+        ( -3.0, 0.0, 2.0 ),
+        ( -3.0, 0.0, 1.0 ),
+        ( -1.0, 0.0, 1.0 ),
+        ( -1.0, 0.0, 3.0 ),
+        ( -2.0, 0.0, 3.0 ),
+        ( 0.0, 0.0, 5.0 ),
+        ( 2.0, 0.0, 3.0 ),
+        ( 1.0, 0.0, 3.0 ),
+        ( 1.0, 0.0, 1.0 ),
+        ( 3.0, 0.0, 1.0 ),
+        ( 3.0, 0.0, 2.0 ),
+        ( 5.0, 0.0, 0.0 ),
+        ( 3.0, 0.0, -2.0 ),
+        ( 3.0, 0.0, -1.0 ),
+        ( 1.0, 0.0, -1.0 ),
+        ( 1.0, 0.0, -3.0 ),
+        ( 2.0, 0.0, -3.0 ),
+        ( 0.0, 0.0, -5.0 )
     ]
 
+#    two_arrow = [
+#        ( -10.0, 0.0, -15.0 ),
+#        ( -20.0, 0.0, 0.0 ),
+#        ( -10.0, 0.0, 15.0 ),
+#        ( -10.0, 0.0, 5.0 ),
+#        ( 10.0, 0.0, 5.0 ),
+#        ( 10.0, 0.0, 15.0 ),
+#        ( 20.0, 0.0, 0.0 ),
+#        ( 10.0, 0.0, -15.0 ),
+#        ( 10.0, 0.0, -5.0 ),
+#        ( -10.0, 0.0, -5.0 ),
+#        ( -10.0, 0.0, -15.0 )
+#    ]
     two_arrow = [
-        ( -10.0, 0.0, -15.0 ),
-        ( -20.0, 0.0, 0.0 ),
-        ( -10.0, 0.0, 15.0 ),
-        ( -10.0, 0.0, 5.0 ),
-        ( 10.0, 0.0, 5.0 ),
-        ( 10.0, 0.0, 15.0 ),
-        ( 20.0, 0.0, 0.0 ),
-        ( 10.0, 0.0, -15.0 ),
-        ( 10.0, 0.0, -5.0 ),
-        ( -10.0, 0.0, -5.0 ),
-        ( -10.0, 0.0, -15.0 )
+        ( -2.0, 0.0, -3.0 ),
+        ( -4.0, 0.0, 0.0 ),
+        ( -2.0, 0.0, 3.0 ),
+        ( -2.0, 0.0, 1.0 ),
+        ( 2.0, 0.0, 1.0 ),
+        ( 2.0, 0.0, 3.0 ),
+        ( 4.0, 0.0, 0.0 ),
+        ( 2.0, 0.0, -3.0 ),
+        ( 2.0, 0.0, -1.0 ),
+        ( -2.0, 0.0, -1.0 ),
+        ( -2.0, 0.0, -3.0 )
     ]
 
     pyramid = [
-        ( -5.0, 0.0, 5.0 ),
-        ( 5.0, 0.0, 5.0 ),
-        ( 5.0, 0.0, -5.0 ),
-        ( -5.0, 0.0, -5.0 ),
-        ( -5.0, 0.0, 5.0 ),
-        ( 0.0, 8.211100621552976, 0.0 ),
-        ( -5.0, 0.0, -5.0 ),
-        ( 5.0, 0.0, -5.0 ),
-        ( 0.0, 8.211100621552976, 0.0 ),
-        ( 5.0, 0.0, 5.0 )
+        ( -1.0, 0.0, 1.0 ),
+        ( 1.0, 0.0, 1.0 ),
+        ( 1.0, 0.0, -1.0 ),
+        ( -1.0, 0.0, -1.0 ),
+        ( -1.0, 0.0, 1.0 ),
+        ( 0.0, 1.6, 0.0 ),
+        ( -1.0, 0.0, -1.0 ),
+        ( 1.0, 0.0, -1.0 ),
+        ( 0.0, 1.6, 0.0 ),
+        ( 1.0, 0.0, 1.0 )
     ]
 
