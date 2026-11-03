@@ -104,7 +104,6 @@ class IKFKUtil():
         for fk_ctrl, fk_joint in zip(fk_ctrls, fk_joints):
             cmds.parentConstraint(fk_ctrl, fk_joint, mo=False)
 
-
         return fk_ctrls
 
     def buildIKLimb(self, limb: str, ik_joints: list[str]) -> list[str]:
@@ -125,6 +124,10 @@ class IKFKUtil():
 
         # Add PV ctrl
         self.addPV(limb+"_pv_ctrl", ikHandle, ik_joints)
+
+        # Add a orientation constraint to end joint, so
+        # we can use ik ctrl to rotate the end joint
+        cmds.orientConstraint(ik_ctrl, ik_joints[-1])
 
         return [ik_ctrl, pv]
 
@@ -287,12 +290,12 @@ class IKFKUtil():
         while tmp_chain:
             # Delete all children of end joint
             if len(tmp_chain) == 1:
-                children = cmds.listRelatives(tmp_chain[0], children=True, type="joint")
+                children = cmds.listRelatives(tmp_chain[0], children=True, type="joint") or []
                 for child in children:
                     cmds.delete(child)
                 break
 
-            children = cmds.listRelatives(tmp_chain[0], children=True, type="joint")
+            children = cmds.listRelatives(tmp_chain[0], children=True, type="joint") or []
             for child in children:
                 if child not in renamed_chain:
                     cmds.delete(child)
