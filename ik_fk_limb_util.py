@@ -275,6 +275,28 @@ class IKFKUtil():
         return renamed
 
 
+    # origin: https://gist.github.com/vshotarov/5f28441fab335ccf1ee65d2563f02488
+    def ikFkSwitch_sameOrient(self):
+
+        switch_ctrl = "switch_ctrl"
+        attr = "ikFkSwitch"
+        fk_joints = ["fk_jnt1", "fk_jnt2", "fk_jnt3"]
+        ik_joints = ["ik_jnt1", "ik_jnt2", "ik_jnt3"]
+        fk_ctrls = ["fk_jnt1_ctrl1", "fk_jnt2_ctrl2", "fk_jnt3_ctrl3"]
+        ik_ctrls = ["ik_jnt1_ctrl1", "ik_jnt2_ctrl2", "ik_jnt3_ctrl3"]
+
+        # Ik to Fk
+        if not cmds.getAttr("{switch_ctrl}.attr"):
+            for ik_jnt, fk_ctrl in zip(ik_joints, fk_ctrls):
+                cmds.delete(cmds.parentConstraint(ik_jnt, fk_ctrl))
+        else:
+
+        # Fk to Ik
+
+        pass
+
+
+
 class createController():
 
     @staticmethod
