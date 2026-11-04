@@ -50,6 +50,8 @@ class LimbIKFKUI(QMainWindow):
         layout.addWidget(r_leg_btn)
 
     def apply(self, limb):
+        cmds.undoInfo(openChunk=True, chunkName="Ik FK Limb")
+
         ik_fk_util = limb_util.IKFKUtil()
 
         joints = cmds.ls(sl=True, type="joint")
@@ -60,6 +62,8 @@ class LimbIKFKUI(QMainWindow):
             return
 
         ik_fk_util.build(limb, joints)
+
+        cmds.undoInfo(closeChunk=True)
 
 window = None
 
