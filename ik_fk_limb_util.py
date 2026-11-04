@@ -305,6 +305,48 @@ class IKFKUtil():
         return renamed_chain
 
 
+    # Add an attribute of "message" type to node
+    def create_message_attr(self, node, attr, multi=False):
+        if not cmds.attributeQuery(attr, node=node, exists=True):
+            cmds.addAttr(node, longName=attr, attributeType="message", multi=multi)
+
+    def register_limb_rig_message(self, node_name, switch_ctrl, fk_ctrls, fk_joints, ik_ctrl, pv_ctrl, ik_joints):
+        '''
+        Create a "network" type node to store the reference to switch ctrl, fk ctrl and joints, ik ctrl and joints, pv ctrl
+        This function is used to find their info when switch ik and fk seamlessly
+        '''
+
+        meta = cmds.createNode("network", name=node_name)
+
+        self.create_message_attr(meta, "switch_ctrl")
+        self.create_message_attr(meta, "ik_ctrl")
+        self.create_message_attr(meta, "pv_ctrl")
+
+        self.create_message_attr(meta, "fk_ctrls", multi=True)
+        self.create_message_attr(meta, "fk_joints", multi=True)
+        self.create_message_attr(meta, "ik_joints", multi=True)
+
+        self.create_message_attr(switch_ctrl, "rig_meta")
+
+        cmds.connectAttr(switch_ctrl+".message", meta+".switch_ctrl")
+        cmds.connectAttr(ik_ctrl+".message", meta+".ik_ctrl")
+        cmds.connectAttr(pv_ctrl+".message", meta+".pv_ctrl")
+
+        for i, (ctrl, joint) in enumerate(zip(fk_ctrls, fk_joints)):
+            cmds.connectAttr(ctrl+".message", "{}.fk_ctrls[{}]".format(meta, i))
+            cmds.connectAttr(joint+".message", "{}.fk_joints[{}]".format(meta, i))
+
+        for i, joint in enumerate(ik_joints):
+            cmds.connectAttr(joint+".message", "{}.ik_joints[{}]".format(meta, i))
+
+        # Find meta from switch ctrl by adding a reference to meta
+        self.create_message_attr(switch_ctrl, "rig_meta", multi=)
+        cmds.connectAttr(meta+".message", switch_ctrl)
+
+        return meta
+
+
+
 class createController():
 
     @staticmethod
