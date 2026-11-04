@@ -2,6 +2,9 @@ import maya.cmds as cmds # type: ignore
 
 class IKFKUtil():
 
+    def __init__(self):
+        self.switch_attr = "ikFkSwitch"
+
     def shortName(self, name: str):
         return name.split("|")[-1]
 
@@ -35,16 +38,14 @@ class IKFKUtil():
 
         print("Build done.\n")
 
-
-
     def switchIkFK(self, switch: str, joints: list[str], fk_joints: list[str], ik_joints: list[str], fk_ctrls: list[str], ik_ctrls: list[str]):
 
         # Add switch attribute, 0 to disable IK, 1 to enable IK
-        cmds.addAttr(switch, longName="ikFkSwitch", defaultValue=0, minValue=0, maxValue=1, keyable=True)
+        cmds.addAttr(switch, longName=self.switch_attr, defaultValue=0, minValue=0, maxValue=1, keyable=True)
 
         reverse = cmds.createNode("reverse", name=switch+"_reverse")
 
-        cmds.connectAttr(f"{switch}.ikFkSwitch", f"{reverse}.inputX", force=True)
+        cmds.connectAttr(f"{switch}.{self.switch_attr}", f"{reverse}.inputX", force=True)
 
         for fk_joint, ik_joint, joint in zip(fk_joints, ik_joints, joints):
             constraint = cmds.parentConstraint(fk_joint, ik_joint, joint, mo=False)[0]
@@ -54,13 +55,13 @@ class IKFKUtil():
                 if "fk" in alias:
                     cmds.connectAttr(f"{reverse}.outputX", f"{constraint}.{alias}", force=True)
                 else:
-                    cmds.connectAttr(f"{switch}.ikFkSwitch", f"{constraint}.{alias}", force=True)
+                    cmds.connectAttr(f"{switch}.{self.switch_attr}", f"{constraint}.{alias}", force=True)
         
         # Switch the visibility of fk and ik ctrl
         for fk_ctrl in fk_ctrls:
             cmds.connectAttr(f"{reverse}.outputX", f"{fk_ctrl}.visibility", force=True)
         for ik_ctrl in ik_ctrls:
-            cmds.connectAttr(f"{switch}.ikFkSwitch", f"{ik_ctrl}.visibility", force=True)
+            cmds.connectAttr(f"{switch}.{self.switch_attr}", f"{ik_ctrl}.visibility", force=True)
 
 
     def createSwitchCtrl(self, limb: str, pos: tuple[float, float, float], normal: tuple[int, int, int]) -> str:
@@ -345,6 +346,28 @@ class IKFKUtil():
 
         return meta
 
+    # Origin: https://gist.github.com/vshotarov/5f28441fab335ccf1ee65d2563f02488
+    def ikFkSwitch_sameOrient(self):
+        switch_ctrl = cmds.ls(sl=True)[0]
+        if not switch_ctrl:
+            cmds.warning("Selecting switch controller before switching ik and fk")
+
+        switch_attr = cmds.getAttr(f"{switch_ctrl}.{self.switch_attr}")
+        if not switch_attr:
+            cmds.warning("Can't find \"ikFkSwitch\" attribute in the selected controller")
+
+
+        if switch_attr != 0:
+            # From fk to ik
+
+        else:
+            # From ik to fk
+
+
+
+
+
+        
 
 
 class createController():
