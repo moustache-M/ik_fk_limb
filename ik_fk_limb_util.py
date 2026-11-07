@@ -146,7 +146,7 @@ class IKFKUtil():
         mid_point = [(a+b)/2 for a,b in zip(end_jnt, start_jnt)]
         bend_vector = [a-b for a,b in zip(mid_jnt, mid_point)]
         pv_pos = [ a+b*5 for a,b in zip(mid_point, bend_vector) ]
-        print("mid point: ", mid_point , "  | bend vector: " , bend_vector , "  | pv_pos:  " , pv_pos)
+        # print("mid point: ", mid_point , "  | bend vector: " , bend_vector , "  | pv_pos:  " , pv_pos)
 
         cmds.xform(pv_ctrl, t=tuple(pv_pos), ws=True)
 
@@ -348,6 +348,10 @@ class IKFKUtil():
 
     # Origin: https://gist.github.com/vshotarov/5f28441fab335ccf1ee65d2563f02488
     def ikFkSwitch_sameOrient(self):
+        '''
+        Switch ik and fk when all controls and joints, including the ik control are oriented
+        in the same way
+        '''
         switch_ctrl = cmds.ls(sl=True)[0]
         if not switch_ctrl:
             cmds.warning("Selecting switch controller before switching ik and fk")
@@ -356,39 +360,73 @@ class IKFKUtil():
         if not switch_attr:
             cmds.warning("Can't find \"ikFkSwitch\" attribute in the selected controller")
 
+        meta = cmds.getAttr(switch_ctrl+".rig_meta")
+        fk_ctrls = meta["fk_ctrls"]
+        fk_joints = meta["fk_joints"]
+        ik_joints = meta["ik_joints"]
+        ik_ctrl = meta["ik_ctrl"]
+        pv_ctrl = meta["pv_ctrl"]
 
         if switch_attr != 0:
             # From fk to ik
+            cmds.delete(cmds.parentConstraint(fk_joints[-1], ik_ctrl))
+
+            mid_point = [ cmds.xform(fk_joints[2], t=True, ws=True, query=True)[i] - cmds.xform(fk_joints[0], t=True, ws=True, query=True)[i] for i in range(3)]
+            bend_vector = [ cmds.xform(fk_joints[1], t=True, ws=True, query=True)[i] - mid_point[i] for i in range(3)]
+            pos = [mid_point[i] + bend_vector[i]*5 for i in range(3)]
+
+            cmds.xform(pv_ctrl, t=pos, ws=True)
 
         else:
             # From ik to fk
+            for i in range(len(fk_joints)):
+                cmds.delete(cmds.parentConstraint(ik_joints[i], fk_ctrls[i]))
 
 
+    def ikFkSwitch_ikWorld(self):
+        '''
+        Switch ik and fk when all controls and joints except the ik control is oriented in
+        the same way. Usually the ik ctrl is oriented in world space
 
+        The method from ik to fk is same as ikFkSwitch_sameOrient funciton above, but the
+        method from fk to ik is different from above, as we need to correct ik ctrl's orientation.
+        And we use a locator which has the same orientation as ik ctrl, but parented to fk joint,
+        So the world translation of locator is the final position of ik ctrl and no extra rotation need.
 
-
+        If the ik end joint is also oriented in world space, then we need to 
         
+        '''
 
+        switch_ctrl = cmds.ls(sl=True)[0]
+        if not switch_ctrl:
+            cmds.warning("Selecting switch controller before switching ik and fk")
 
-    # origin: https://gist.github.com/vshotarov/5f28441fab335ccf1ee65d2563f02488
-    def ikFkSwitch_sameOrient(self):
+        switch_attr = cmds.getAttr(f"{switch_ctrl}.{self.switch_attr}")
+        if not switch_attr:
+            cmds.warning("Can't find \"ikFkSwitch\" attribute in the selected controller")
 
-        switch_ctrl = "switch_ctrl"
-        attr = "ikFkSwitch"
-        fk_joints = ["fk_jnt1", "fk_jnt2", "fk_jnt3"]
-        ik_joints = ["ik_jnt1", "ik_jnt2", "ik_jnt3"]
-        fk_ctrls = ["fk_jnt1_ctrl1", "fk_jnt2_ctrl2", "fk_jnt3_ctrl3"]
-        ik_ctrls = ["ik_jnt1_ctrl1", "ik_jnt2_ctrl2", "ik_jnt3_ctrl3"]
+        meta = cmds.getAttr(switch_ctrl+".rig_meta")
+        fk_ctrls = meta["fk_ctrls"]
+        fk_joints = meta["fk_joints"]
+        ik_joints = meta["ik_joints"]
+        ik_ctrl = meta["ik_ctrl"]
+        pv_ctrl = meta["pv_ctrl"]
 
-        # Ik to Fk
-        if not cmds.getAttr("{switch_ctrl}.attr"):
-            for ik_jnt, fk_ctrl in zip(ik_joints, fk_ctrls):
-                cmds.delete(cmds.parentConstraint(ik_jnt, fk_ctrl))
+        if switch_attr != 0:
+            # From fk to ik
+            cmds.delete(cmds.parentConstraint(fk_joints[-1], ik_ctrl))
+
+            mid_point = [ cmds.xform(fk_joints[2], t=True, ws=True, query=True)[i] - cmds.xform(fk_joints[0], t=True, ws=True, query=True)[i] for i in range(3)]
+            bend_vector = [ cmds.xform(fk_joints[1], t=True, ws=True, query=True)[i] - mid_point[i] for i in range(3)]
+            pos = [mid_point[i] + bend_vector[i]*5 for i in range(3)]
+
+            cmds.xform(pv_ctrl, t=pos, ws=True)
+
         else:
+            # From ik to fk
+            for i in range(len(fk_joints)):
+                cmds.delete(cmds.parentConstraint(ik_joints[i], fk_ctrls[i]))
 
-        # Fk to Ik
-
-        pass
 
 
 
