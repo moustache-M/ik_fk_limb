@@ -1,5 +1,7 @@
 import maya.cmds as cmds # type: ignore
 
+ik_world_locator = ""
+
 class IKFKUtil():
 
     def __init__(self):
@@ -35,6 +37,11 @@ class IKFKUtil():
         swich_ctrl = self.createSwitchCtrl(limb, switch_pos, (0,1,0))
 
         self.switchIkFK(swich_ctrl, joints, fk_joints, ik_joints, fk_ctrls, ik_ctrls)
+
+        ik_world_locator = self.set_ik_locator(limb+"_ik_world_locator", fk_ctrls[2], ik_ctrls[0])
+
+        self.register_limb_rig_message(limb+"_rig_network", swich_ctrl, fk_ctrls, fk_joints, ik_ctrls[0], ik_ctrls[1], ik_joints, ik_world_locator)
+
 
         print("Build done.\n")
 
@@ -118,7 +125,7 @@ class IKFKUtil():
 
         # Add IK ctrl
         ik_ctrl = createController.fourArrow(name=limb+"_ik_ctrl", normal=(1,0,0))
-        cmds.matchTransform(ik_ctrl, ik_joints[-1], position=True, rotation=True)
+        cmds.matchTransform(ik_ctrl, ik_joints[-1], position=True, rotation=False)
         self.bake_trs_offsetParentMatrix(ik_ctrl)
 
         cmds.parent(ikHandle, ik_ctrl)
@@ -128,7 +135,7 @@ class IKFKUtil():
 
         # Add a orientation constraint to end joint, so
         # we can use ik ctrl to rotate the end joint
-        cmds.orientConstraint(ik_ctrl, ik_joints[-1])
+        cmds.orientConstraint(ik_ctrl, ik_joints[-1], maintainOffset=True)
 
         return [ik_ctrl, pv]
 
@@ -148,7 +155,7 @@ class IKFKUtil():
         pv_pos = [ a+b*5 for a,b in zip(mid_point, bend_vector) ]
         # print("mid point: ", mid_point , "  | bend vector: " , bend_vector , "  | pv_pos:  " , pv_pos)
 
-        cmds.xform(pv_ctrl, t=tuple(pv_pos), ws=True)
+        cmds.xform(pv_ctrl, t=pv_pos, ws=True)
 
         # Add pv constraint
         self.connectPV_constraint(ikHandle, pv_ctrl)
@@ -311,7 +318,7 @@ class IKFKUtil():
         if not cmds.attributeQuery(attr, node=node, exists=True):
             cmds.addAttr(node, longName=attr, attributeType="message", multi=multi)
 
-    def register_limb_rig_message(self, node_name, switch_ctrl, fk_ctrls, fk_joints, ik_ctrl, pv_ctrl, ik_joints):
+    def register_limb_rig_message(self, node_name, switch_ctrl, fk_ctrls, fk_joints, ik_ctrl, pv_ctrl, ik_joints, ik_world_locator):
         '''
         Create a "network" type node to store the reference to switch ctrl, fk ctrl and joints, ik ctrl and joints, pv ctrl
         This function is used to find their info when switch ik and fk seamlessly
@@ -322,6 +329,7 @@ class IKFKUtil():
         self.create_message_attr(meta, "switch_ctrl")
         self.create_message_attr(meta, "ik_ctrl")
         self.create_message_attr(meta, "pv_ctrl")
+        self.create_message_attr(meta, "ik_world_locator")
 
         self.create_message_attr(meta, "fk_ctrls", multi=True)
         self.create_message_attr(meta, "fk_joints", multi=True)
@@ -332,6 +340,7 @@ class IKFKUtil():
         cmds.connectAttr(switch_ctrl+".message", meta+".switch_ctrl")
         cmds.connectAttr(ik_ctrl+".message", meta+".ik_ctrl")
         cmds.connectAttr(pv_ctrl+".message", meta+".pv_ctrl")
+        cmds.connectAttr(ik_world_locator+".message", meta+".ik_world_locator")
 
         for i, (ctrl, joint) in enumerate(zip(fk_ctrls, fk_joints)):
             cmds.connectAttr(ctrl+".message", "{}.fk_ctrls[{}]".format(meta, i))
@@ -340,9 +349,9 @@ class IKFKUtil():
         for i, joint in enumerate(ik_joints):
             cmds.connectAttr(joint+".message", "{}.ik_joints[{}]".format(meta, i))
 
+
         # Find meta from switch ctrl by adding a reference to meta
-        self.create_message_attr(switch_ctrl, "rig_meta", multi=)
-        cmds.connectAttr(meta+".message", switch_ctrl)
+        cmds.connectAttr(meta+".message", switch_ctrl+".rig_meta")
 
         return meta
 
@@ -353,35 +362,50 @@ class IKFKUtil():
         in the same way
         '''
         switch_ctrl = cmds.ls(sl=True)[0]
-        if not switch_ctrl:
+        if not switch_ctrl :
             cmds.warning("Selecting switch controller before switching ik and fk")
+            return
+
+        if not cmds.attributeQuery(f"{self.switch_attr}", node=f"{switch_ctrl}", exists=True):
+            cmds.warning("Can't find \"ikFkSwitch\" attribute in the selected controller")
+            return
 
         switch_attr = cmds.getAttr(f"{switch_ctrl}.{self.switch_attr}")
-        if not switch_attr:
-            cmds.warning("Can't find \"ikFkSwitch\" attribute in the selected controller")
 
-        meta = cmds.getAttr(switch_ctrl+".rig_meta")
+        meta = self.get_rig_meta(switch_ctrl)
         fk_ctrls = meta["fk_ctrls"]
         fk_joints = meta["fk_joints"]
         ik_joints = meta["ik_joints"]
         ik_ctrl = meta["ik_ctrl"]
         pv_ctrl = meta["pv_ctrl"]
 
-        if switch_attr != 0:
+        if switch_attr == 0:
             # From fk to ik
             cmds.delete(cmds.parentConstraint(fk_joints[-1], ik_ctrl))
 
-            mid_point = [ cmds.xform(fk_joints[2], t=True, ws=True, query=True)[i] - cmds.xform(fk_joints[0], t=True, ws=True, query=True)[i] for i in range(3)]
-            bend_vector = [ cmds.xform(fk_joints[1], t=True, ws=True, query=True)[i] - mid_point[i] for i in range(3)]
-            pos = [mid_point[i] + bend_vector[i]*5 for i in range(3)]
+            mid_point = [ 
+                (cmds.xform(fk_joints[2], t=True, ws=True, query=True)[i] + cmds.xform(fk_joints[0], t=True, ws=True, query=True)[i])/2 
+                for i in range(3)
+            ]
+            bend_vector = [ 
+                cmds.xform(fk_joints[1], t=True, ws=True, query=True)[i] - mid_point[i] 
+                for i in range(3)
+            ]
+            pos = [ 
+                mid_point[i] + bend_vector[i]*5 
+                for i in range(3) 
+            ]
 
             cmds.xform(pv_ctrl, t=pos, ws=True)
+
+            cmds.setAttr(switch_ctrl+".ikFkSwitch", 1)
 
         else:
             # From ik to fk
             for i in range(len(fk_joints)):
                 cmds.delete(cmds.parentConstraint(ik_joints[i], fk_ctrls[i]))
 
+            cmds.setAttr(switch_ctrl+".ikFkSwitch", 0)
 
     def ikFkSwitch_ikWorld(self):
         '''
@@ -393,39 +417,95 @@ class IKFKUtil():
         And we use a locator which has the same orientation as ik ctrl, but parented to fk joint,
         So the world translation of locator is the final position of ik ctrl and no extra rotation need.
 
-        If the ik end joint is also oriented in world space, then we need to 
-        
         '''
 
         switch_ctrl = cmds.ls(sl=True)[0]
         if not switch_ctrl:
             cmds.warning("Selecting switch controller before switching ik and fk")
+            return
+        if not cmds.attributeQuery(f"{self.switch_attr}", node=f"{switch_ctrl}", exists=True):
+            cmds.warning("Can't find \"ikFkSwitch\" attribute in the selected controller")
+            return
 
         switch_attr = cmds.getAttr(f"{switch_ctrl}.{self.switch_attr}")
-        if not switch_attr:
-            cmds.warning("Can't find \"ikFkSwitch\" attribute in the selected controller")
 
-        meta = cmds.getAttr(switch_ctrl+".rig_meta")
+        meta = self.get_rig_meta(switch_ctrl)
         fk_ctrls = meta["fk_ctrls"]
         fk_joints = meta["fk_joints"]
         ik_joints = meta["ik_joints"]
         ik_ctrl = meta["ik_ctrl"]
         pv_ctrl = meta["pv_ctrl"]
+        ik_world_locator = meta["ik_world_locator"]
 
-        if switch_attr != 0:
+        if switch_attr == 0:
             # From fk to ik
-            cmds.delete(cmds.parentConstraint(fk_joints[-1], ik_ctrl))
+            print("ik_world_locator: ",  ik_world_locator , "\n")
+            cmds.delete(cmds.parentConstraint(ik_world_locator, ik_ctrl))
 
-            mid_point = [ cmds.xform(fk_joints[2], t=True, ws=True, query=True)[i] - cmds.xform(fk_joints[0], t=True, ws=True, query=True)[i] for i in range(3)]
-            bend_vector = [ cmds.xform(fk_joints[1], t=True, ws=True, query=True)[i] - mid_point[i] for i in range(3)]
-            pos = [mid_point[i] + bend_vector[i]*5 for i in range(3)]
-
+            mid_point = [ 
+                (cmds.xform(fk_joints[2], t=True, ws=True, query=True)[i] + cmds.xform(fk_joints[0], t=True, ws=True, query=True)[i])/2 
+                for i in range(3)
+            ]
+            bend_vector = [ 
+                cmds.xform(fk_joints[1], t=True, ws=True, query=True)[i] - mid_point[i] 
+                for i in range(3)
+            ]
+            pos = [ 
+                mid_point[i] + bend_vector[i]*5 
+                for i in range(3) 
+            ]
             cmds.xform(pv_ctrl, t=pos, ws=True)
+
+            cmds.setAttr(switch_ctrl+".ikFkSwitch", 1)
 
         else:
             # From ik to fk
             for i in range(len(fk_joints)):
                 cmds.delete(cmds.parentConstraint(ik_joints[i], fk_ctrls[i]))
+
+            cmds.setAttr(switch_ctrl+".ikFkSwitch", 0)
+
+    def get_rig_meta(self, switch_ctrl):
+        '''
+        Get names of fk ctrls, fk joints, ik joints, ik ctrl, pv ctrl of one limb
+        '''
+        meta_nodes = cmds.listConnections(f"{switch_ctrl}.rig_meta", source=True, destination=False, type="network") or []
+
+        if not meta_nodes:
+            cmds.warning(f"Can't find rig_meta attribute in {switch_ctrl}")
+
+        meta = meta_nodes[0]
+
+        def get_message(attr):
+            connections = cmds.listConnections(f"{meta}.{attr}", source=True, destination=False) or []
+
+            if not connections:
+                cmds.warning(f"Can't find connection in {meta}.{attr}")
+
+            return connections[0]
+
+        def get_message_array(attr):
+            indices = cmds.getAttr(f"{meta}.{attr}", multiIndices=True) or []
+
+            return [ get_message(f"{attr}[{index}]") for index in indices ]
+
+        return {
+            "fk_ctrls": get_message_array("fk_ctrls"),
+            "fk_joints": get_message_array("fk_joints"),
+            "ik_joints": get_message_array("ik_joints"),
+            "ik_ctrl": get_message("ik_ctrl"),
+            "pv_ctrl": get_message("pv_ctrl"),
+            "ik_world_locator": get_message("ik_world_locator")
+        }
+
+    # Set a locator with the same orientation as ik ctrl and parent it to fk end ctrl
+    def set_ik_locator(self, name, fk_end_ctrl, ik_ctrl):
+        locator = cmds.spaceLocator(name=name)[0]
+        cmds.delete(cmds.parentConstraint(ik_ctrl, locator, maintainOffset=False))
+        cmds.parent(locator, fk_end_ctrl)
+
+        print("locator: ", locator, "\n")
+        return locator
 
 
 

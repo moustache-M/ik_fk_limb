@@ -52,18 +52,51 @@ class LimbIKFKUI(QMainWindow):
     def apply(self, limb):
         cmds.undoInfo(openChunk=True, chunkName="Ik FK Limb")
 
-        ik_fk_util = limb_util.IKFKUtil()
+        try:
+            ik_fk_util = limb_util.IKFKUtil()
 
-        joints = cmds.ls(sl=True, type="joint")
+            joints = cmds.ls(sl=True, type="joint")
 
-        # Only build IK/FK for human limb
-        if len(joints) != 3:
-            cmds.warning("The number of selected joints must be 3")
-            return
+            # Only build IK/FK for human limb
+            if len(joints) != 3:
+                cmds.warning("The number of selected joints must be 3")
+                return
 
-        ik_fk_util.build(limb, joints)
+            ik_fk_util.build(limb, joints)
+        finally:
+            cmds.undoInfo(closeChunk=True)
 
-        cmds.undoInfo(closeChunk=True)
+
+MENU_NAME = "markingMenu"
+
+class MarkingMenu():
+    def __init__(self) -> None:
+        self._removeOld()
+        self._build()
+
+    def _buildMarkingMenu(self, menu, parent):
+        # Radial positioned
+        cmds.menuItem(p=menu, l="Ik Fk Switch SameOrient", rp='N', command=self.ikFkSwitch_sameOrient)
+        cmds.menuItem(p=menu, l="Ik Fk Switch IkWorld", rp='S', command=self.ikFkSwitch_ikWorld)
+        print("update menu\n")
+
+
+    def _removeOld(self):
+        if cmds.popupMenu(MENU_NAME, ex=True):
+            cmds.deleteUI(MENU_NAME)
+
+    def _build(self):
+        menu = cmds.popupMenu(MENU_NAME, mm=True, b=2, aob=True, ctl=True, alt=True, sh=False, p="viewPanes", pmo=True, pmc=self._buildMarkingMenu)
+
+    # Seamless ik fk switch
+    def ikFkSwitch_sameOrient(self, *args):
+        ikfkutil = limb_util.IKFKUtil()
+        ikfkutil.ikFkSwitch_sameOrient()
+
+    def ikFkSwitch_ikWorld(self, *args):
+        ikfkutil = limb_util.IKFKUtil()
+        ikfkutil.ikFkSwitch_ikWorld()
+
 
 window = None
 
@@ -77,5 +110,7 @@ def show():
     main_window = wrapInstance(int(main_window_ptr), QW.QWidget)
 
     window = LimbIKFKUI(main_window)
+
+    marking_menu = MarkingMenu()
 
     window.show()
